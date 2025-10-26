@@ -19,6 +19,5 @@ yarn.lock
 
 contracts/test
 contracts/wrapped-tokens/staking/
-contracts/wrapped-tokens/MintUtil.sol
 contracts/wrapped-tokens/RateLimit.sol
 @types/generated/

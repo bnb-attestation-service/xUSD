@@ -24,7 +24,7 @@
 
 pragma solidity 0.8.6;
 
-import { RateLimit } from "./RateLimit.sol";
+
 import { MintUtil } from "./MintUtil.sol";
 import { IERC20 } from "@openzeppelin4.2.0/contracts/token/ERC20/IERC20.sol";
 import { ReentrancyGuard } from "@openzeppelin4.2.0/contracts/security/ReentrancyGuard.sol";
