@@ -40,6 +40,7 @@ const OWNER_ADDRESS = process.env.OWNER_ADDRESS || "";
 const PAUSER_ADDRESS = process.env.PAUSER_ADDRESS || "";
 const BLACKLISTER_ADDRESS = process.env.BLACKLISTER_ADDRESS || "";
 const MASTER_MINTER_ADDRESS = process.env.MASTER_MINTER_ADDRESS || "";
+const MAX_MINT_ALLOWANCE = process.env.MAX_MINT_ALLOWANCE || "100000000000000";
 
 // 源代币地址（如 USDC）
 const SOURCE_TOKEN_ADDRESS = process.env.SOURCE_TOKEN_ADDRESS || "0x8fbaFC8c1f49B66F852B354a623d829661229C73";
@@ -89,7 +90,7 @@ async function deployWrappedUSDCV2_1() {
   console.log("2. 初始化 Token...");
   await fiatToken.initialize(
     "Wrapped USDC",   // 名称
-    "XUSDC",          // 符号
+    "XUSD",          // 符号
     "USD",            // 货币代码
     6,                // 精度（6位小数，与USDC一致）
     owner,            // owner
@@ -109,7 +110,7 @@ async function deployWrappedUSDCV2_1() {
 
   // 5. 配置 MintForwarder 为 FiatToken 的 Minter
   console.log("5. 配置 MintForwarder 为 FiatToken 的 Minter...");
-  const maxMinterAllowance = ethers.utils.parseUnits("100000000000", 6); // 10 亿 USDC 限额
+  const maxMinterAllowance = ethers.utils.parseUnits(MAX_MINT_ALLOWANCE, 6); // 1000 万亿 USDC 限额
   await fiatToken.connect(deployer).configureMinter(
     mintForwarder.address,
     maxMinterAllowance

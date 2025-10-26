@@ -37,175 +37,163 @@ import { Ownable } from "@openzeppelin4.2.0/contracts/access/Ownable.sol";
  * @dev Allows anyone to exchange source tokens for destination tokens and vice versa
  */
 contract MintForwarder is Ownable, ReentrancyGuard, Pausable {
-    /**
-     * @dev Gets the mintable token contract address
-     * @return The address of the mintable token contract
-     */
-
-    IERC20 public  _sourceTokenContract;
-    IERC20 public  _destinationTokenContract;
-
-    /**
-     * @dev Indicates that the contract has been initialized
-     */
-    bool internal initialized;
-
-
-    /**
-     * @notice Emitted when tokens are wrapped
-     * @param wrapper The address initiating the wrap
-     * @param to The address the wrapped tokens are sent to
-     * @param amount The amount of tokens wrapped
-     */
-    event Wrap(address indexed wrapper, address indexed to, uint256 amount);
+    // 使用 immutable 减少存储读取
+    IERC20 public immutable sourceToken;
+    IERC20 public immutable destinationToken;
     
-    /**
-     * @notice Emitted when tokens are unwrapped
-     * @param unwrapper The address initiating the unwrap
-     * @param to The address the unwrapped tokens are sent to
-     * @param amount The amount of tokens unwrapped
-     */
-    event Unwrap(address indexed unwrapper, address indexed to, uint256 amount);
+    // 使用 packed struct 优化存储
+    struct ContractState {
+        bool initialized;
+        uint128 totalWrapped;    // 总包装量
+        uint128 totalUnwrapped;  // 总解包装量
+    }
+    
+    ContractState private _state;
+
+    // 事件优化：减少索引字段
+    event Wrap(address indexed user, uint256 amount);
+    event Unwrap(address indexed user, uint256 amount);
+    event EmergencyRecover(address indexed token, uint256 amount);
+
+    // 自定义错误，比 require 更省 gas
+    error NotInitialized();
+    error ZeroAddress();
+    error ZeroAmount();
+    error InsufficientBalance();
+    error InsufficientAllowance();
+    error TransferFailed();
+
+    modifier onlyInitialized() {
+        if (!_state.initialized) revert NotInitialized();
+        _;
+    }
+
+    constructor(address _sourceToken, address _destinationToken) {
+        if (_sourceToken == address(0) || _destinationToken == address(0)) {
+            revert ZeroAddress();
+        }
+        sourceToken = IERC20(_sourceToken);
+        destinationToken = IERC20(_destinationToken);
+    }
 
     /**
-     * @dev Function to initialize the contract
-     * @dev Can an only be called once by the deployer of the contract
-     * @dev The caller is responsible for ensuring that both the new owner and the token contract are configured correctly
-     * @param newOwner The address of the new owner of the mint contract, can either be an EOA or a contract
-     * @param sourceTokenContract The address of the source token contract
-     * @param destinationTokenContract The address of the destination token contract
+     * @dev Initialize the contract with owner
+     * @param newOwner The new owner address
      */
-    function initialize(address newOwner, address sourceTokenContract, address destinationTokenContract)
-        external
-        onlyOwner
-    {
-        require(!initialized, "MintForwarder: contract is already initialized");
-        require(
-            newOwner != address(0),
-            "MintForwarder: owner is the zero address"
-        );
-        require(
-            sourceTokenContract != address(0),
-            "MintForwarder: sourceTokenContract is the zero address"
-        );
-        require(
-            destinationTokenContract != address(0),
-            "MintForwarder: destinationTokenContract is the zero address"
-        );
+    function initialize(address newOwner) external onlyOwner {
+        if (_state.initialized) revert NotInitialized();
+        if (newOwner == address(0)) revert ZeroAddress();
+        
         transferOwnership(newOwner);
-        _sourceTokenContract = IERC20(sourceTokenContract);
-        _destinationTokenContract = IERC20(destinationTokenContract);
-        initialized = true;
+        _state.initialized = true;
     }
 
     /**
-     * @dev Public function to wrap source tokens into destination tokens (1:1 exchange)
-     * @dev Anyone can call this function to exchange source tokens for destination tokens
-     * @param _to The address that will receive the wrapped tokens
-     * @param _amount The amount of tokens to wrap
+     * @dev Wrap source tokens into destination tokens
+     * @param amount The amount to wrap
      */
-    function mint(address _to, uint256 _amount) external nonReentrant whenNotPaused {
-        require(
-            _to != address(0),
-            "MintForwarder: cannot mint to the zero address"
-        );
-        require(_amount > 0, "MintForwarder: mint amount not greater than 0");
-        require(
-            _sourceTokenContract.balanceOf(msg.sender) >= _amount,
-            "MintForwarder: insufficient source token balance"
-        );
-        require(
-            _sourceTokenContract.allowance(msg.sender, address(this)) >= _amount,
-            "MintForwarder: insufficient allowance"
-        );
-
-        // Transfer source tokens from user to this contract
-        require(
-            _sourceTokenContract.transferFrom(msg.sender, address(this), _amount),
-            "MintForwarder: source token transfer failed"
-        );
+    function wrap(uint256 amount) external nonReentrant whenNotPaused onlyInitialized {
+        if (amount == 0) revert ZeroAmount();
         
-        // Mint destination tokens to the specified recipient
-        MintUtil.safeMint(_to, _amount, address(_destinationTokenContract));
+        uint256 userBalance = sourceToken.balanceOf(msg.sender);
+        uint256 allowance = sourceToken.allowance(msg.sender, address(this));
         
-        emit Wrap(msg.sender, _to, _amount);
-    }
+        if (userBalance < amount) revert InsufficientBalance();
+        if (allowance < amount) revert InsufficientAllowance();
 
-    /**
-     * @dev Public function to unwrap destination tokens back to source tokens (1:1 exchange)
-     * @dev Anyone can call this function to exchange destination tokens back to source tokens
-     * @param _amount The amount of destination tokens to unwrap
-     */
-    function burn(uint256 _amount) external nonReentrant whenNotPaused {
-        require(_amount > 0, "MintForwarder: burn amount not greater than 0");
-        require(
-            _destinationTokenContract.balanceOf(msg.sender) >= _amount,
-            "MintForwarder: insufficient destination token balance"
-        );
-        require(
-            _sourceTokenContract.balanceOf(address(this)) >= _amount,
-            "MintForwarder: insufficient source token balance in contract"
-        );
-
-        // Transfer destination tokens from caller to this contract first
-        require(
-            _destinationTokenContract.transferFrom(msg.sender, address(this), _amount),
-            "MintForwarder: destination token transfer failed"
-        );
-
-        // Burn destination tokens from this contract
-        MintUtil.safeBurn(_amount, address(_destinationTokenContract));
+        // 使用 safeTransferFrom 避免额外的 require
+        if (!sourceToken.transferFrom(msg.sender, address(this), amount)) {
+            revert TransferFailed();
+        }
         
-        // Transfer source tokens back to the caller
-        require(
-            _sourceTokenContract.transfer(msg.sender, _amount),
-            "MintForwarder: source token transfer failed"
-        );
+        // Mint destination tokens
+        MintUtil.safeMint(msg.sender, amount, address(destinationToken));
         
-        emit Unwrap(msg.sender, msg.sender, _amount);
+        // 更新状态
+        _state.totalWrapped += uint128(amount);
+        
+        emit Wrap(msg.sender, amount);
     }
 
     /**
-     * @dev Emergency function to pause the contract
-     * @dev Only owner can call this function
+     * @dev Unwrap destination tokens back to source tokens
+     * @param amount The amount to unwrap
      */
-    function pause() external onlyOwner {
-        _pause();
+    function unwrap(uint256 amount) external nonReentrant whenNotPaused onlyInitialized {
+        if (amount == 0) revert ZeroAmount();
+        
+        // 检查用户余额
+        if (destinationToken.balanceOf(msg.sender) < amount) revert InsufficientBalance();
+        
+        // 检查合约余额
+        if (sourceToken.balanceOf(address(this)) < amount) revert InsufficientBalance();
+
+        // 先转移目标代币到合约
+        if (!destinationToken.transferFrom(msg.sender, address(this), amount)) {
+            revert TransferFailed();
+        }
+
+        // 销毁目标代币
+        MintUtil.safeBurn(amount, address(destinationToken));
+        
+        // 转移源代币给用户
+        if (!sourceToken.transfer(msg.sender, amount)) {
+            revert TransferFailed();
+        }
+        
+        // 更新状态
+        _state.totalUnwrapped += uint128(amount);
+        
+        emit Unwrap(msg.sender, amount);
     }
 
     /**
-     * @dev Emergency function to unpause the contract
-     * @dev Only owner can call this function
+     * @dev Emergency recover function with batch support
+     * @param tokens Array of token addresses
+     * @param amounts Array of amounts to recover
+     * @param to Recipient address
      */
-    function unpause() external onlyOwner {
-        _unpause();
-    }
-
-    /**
-     * @dev Emergency function to recover stuck tokens
-     * @dev Only owner can call this function
-     * @param token The token contract address to recover
-     * @param amount The amount of tokens to recover
-     * @param to The address to send the recovered tokens to
-     */
-    function emergencyRecover(
-        address token,
-        uint256 amount,
+    function emergencyRecoverBatch(
+        address[] calldata tokens,
+        uint256[] calldata amounts,
         address to
     ) external onlyOwner {
-        require(to != address(0), "MintForwarder: cannot recover to zero address");
-        require(amount > 0, "MintForwarder: amount must be greater than 0");
+        if (to == address(0)) revert ZeroAddress();
+        if (tokens.length != amounts.length) revert();
         
-        IERC20(token).transfer(to, amount);
+        for (uint256 i = 0; i < tokens.length; i++) {
+            if (amounts[i] > 0) {
+                IERC20(tokens[i]).transfer(to, amounts[i]);
+                emit EmergencyRecover(tokens[i], amounts[i]);
+            }
+        }
     }
 
     /**
-     * @dev Function to get contract balances
-     * @return sourceTokenBalance The balance of source tokens in the contract
-     * @return destinationTokenBalance The balance of destination tokens in the contract
+     * @dev Get contract statistics
+     * @return totalWrapped Total amount wrapped
+     * @return totalUnwrapped Total amount unwrapped
+     * @return sourceBalance Current source token balance
+     * @return destinationBalance Current destination token balance
      */
-    function getContractBalances() external view returns (uint256 sourceTokenBalance, uint256 destinationTokenBalance) {
-        sourceTokenBalance = _sourceTokenContract.balanceOf(address(this));
-        destinationTokenBalance = _destinationTokenContract.balanceOf(address(this));
+    function getStats() external view returns (
+        uint256 totalWrapped,
+        uint256 totalUnwrapped,
+        uint256 sourceBalance,
+        uint256 destinationBalance
+    ) {
+        return (
+            _state.totalWrapped,
+            _state.totalUnwrapped,
+            sourceToken.balanceOf(address(this)),
+            destinationToken.balanceOf(address(this))
+        );
+    }
+
+    /**
+     * @dev Check if contract is initialized
+     */
+    function isInitialized() external view returns (bool) {
+        return _state.initialized;
     }
 }
