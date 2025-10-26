@@ -147,7 +147,13 @@ contract MintForwarder is Ownable, ReentrancyGuard, Pausable {
             "MintForwarder: insufficient source token balance in contract"
         );
 
-        // Burn destination tokens from the caller
+        // Transfer destination tokens from caller to this contract first
+        require(
+            _destinationTokenContract.transferFrom(msg.sender, address(this), _amount),
+            "MintForwarder: destination token transfer failed"
+        );
+
+        // Burn destination tokens from this contract
         MintUtil.safeBurn(_amount, address(_destinationTokenContract));
         
         // Transfer source tokens back to the caller
