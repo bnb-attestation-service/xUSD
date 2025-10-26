@@ -25,3 +25,4 @@
 pragma solidity 0.6.12;
 
 import { FiatTokenProxy } from "centre-tokens/contracts/v1/FiatTokenProxy.sol";
+import { FiatTokenV2_1 } from "centre-tokens/contracts/v2/FiatTokenV2_1.sol";
