@@ -48,7 +48,7 @@ module.exports = {
       url: "https://bsc-testnet.nodereal.io/v1/67474aba58b44063b80db0030176c887",
       chainId: 97,
       accounts: deployerPrivateKey ? [deployerPrivateKey] : [],
-      gasPrice: 2000000000, // 1 gwei
+      gasPrice: 100000000, // 1 gwei
     },
     bscMainnet: {
       url: "https://bsc-mainnet.nodereal.io/v1/67474aba58b44063b80db0030176c887",

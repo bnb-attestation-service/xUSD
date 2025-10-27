@@ -38,8 +38,8 @@ import { Ownable } from "@openzeppelin4.2.0/contracts/access/Ownable.sol";
  */
 contract MintForwarder is Ownable, ReentrancyGuard, Pausable {
     // 使用 immutable 减少存储读取
-    IERC20 public immutable sourceToken;
-    IERC20 public immutable destinationToken;
+    IERC20 public sourceToken;
+    IERC20 public destinationToken;
     
     // 使用 packed struct 优化存储
     struct ContractState {
@@ -68,24 +68,22 @@ contract MintForwarder is Ownable, ReentrancyGuard, Pausable {
         _;
     }
 
-    constructor(address _sourceToken, address _destinationToken) {
-        if (_sourceToken == address(0) || _destinationToken == address(0)) {
-            revert ZeroAddress();
-        }
-        sourceToken = IERC20(_sourceToken);
-        destinationToken = IERC20(_destinationToken);
-    }
-
     /**
      * @dev Initialize the contract with owner
      * @param newOwner The new owner address
      */
-    function initialize(address newOwner) external onlyOwner {
+    function initialize(address newOwner,address _sourceToken, address _destinationToken) external onlyOwner {
         if (_state.initialized) revert NotInitialized();
         if (newOwner == address(0)) revert ZeroAddress();
         
         transferOwnership(newOwner);
         _state.initialized = true;
+
+        if (_sourceToken == address(0) || _destinationToken == address(0)) {
+            revert ZeroAddress();
+        }
+        sourceToken = IERC20(_sourceToken);
+        destinationToken = IERC20(_destinationToken);
     }
 
     /**
